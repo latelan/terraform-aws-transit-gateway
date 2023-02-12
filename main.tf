@@ -1,7 +1,7 @@
 locals {
   # List of maps with key and route values
   vpc_attachments_with_routes = chunklist(flatten([
-    for k, v in var.vpc_attachments : setproduct([{ key = k }], v.tgw_routes) if var.create_tgw && can(v.tgw_routes)
+    for k, v in var.vpc_attachments : setproduct([{ key = k, route_table = v.tgw_route_table }], v.tgw_routes) if var.create_tgw && can(v.tgw_routes)
   ]), 2)
 
   tgw_default_route_table_tags_merged = merge(
@@ -18,6 +18,11 @@ locals {
       }
     ]
   ])
+
+  tgw_route_tables = flatten(toset([
+    for k, v in var.vpc_attachments : [v.tgw_route_table]
+  ]))
+
 }
 
 ################################################################################
@@ -77,7 +82,7 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
 
   tags = merge(
     var.tags,
-    { Name = var.name },
+    { Name = each.key },
     var.tgw_vpc_attachment_tags,
   )
 }
@@ -87,13 +92,13 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
 ################################################################################
 
 resource "aws_ec2_transit_gateway_route_table" "this" {
-  count = var.create_tgw ? 1 : 0
+  count = var.create_tgw ? length(local.tgw_route_tables) : 0
 
   transit_gateway_id = aws_ec2_transit_gateway.this[0].id
 
   tags = merge(
     var.tags,
-    { Name = var.name },
+    { Name = local.tgw_route_tables[count.index] },
     var.tgw_route_table_tags,
   )
 }
@@ -104,8 +109,8 @@ resource "aws_ec2_transit_gateway_route" "this" {
   destination_cidr_block = local.vpc_attachments_with_routes[count.index][1].destination_cidr_block
   blackhole              = try(local.vpc_attachments_with_routes[count.index][1].blackhole, null)
 
-  transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[0].id : var.transit_gateway_route_table_id
-  transit_gateway_attachment_id  = tobool(try(local.vpc_attachments_with_routes[count.index][1].blackhole, false)) == false ? aws_ec2_transit_gateway_vpc_attachment.this[local.vpc_attachments_with_routes[count.index][0].key].id : null
+  transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[index(local.tgw_route_tables, local.vpc_attachments_with_routes[count.index][0].route_table)].id : var.transit_gateway_route_table_id
+  transit_gateway_attachment_id  = tobool(try(local.vpc_attachments_with_routes[count.index][1].blackhole, false)) == false ? aws_ec2_transit_gateway_vpc_attachment.this[local.vpc_attachments_with_routes[count.index][1].transit_gateway_attachment].id : null
 }
 
 resource "aws_route" "this" {
@@ -123,7 +128,7 @@ resource "aws_ec2_transit_gateway_route_table_association" "this" {
 
   # Create association if it was not set already by aws_ec2_transit_gateway_vpc_attachment resource
   transit_gateway_attachment_id  = aws_ec2_transit_gateway_vpc_attachment.this[each.key].id
-  transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[0].id : try(each.value.transit_gateway_route_table_id, var.transit_gateway_route_table_id)
+  transit_gateway_route_table_id = var.create_tgw ? aws_ec2_transit_gateway_route_table.this[index(local.tgw_route_tables, each.value.tgw_route_table)].id : try(each.value.transit_gateway_route_table_id, var.transit_gateway_route_table_id)
 }
 
 resource "aws_ec2_transit_gateway_route_table_propagation" "this" {

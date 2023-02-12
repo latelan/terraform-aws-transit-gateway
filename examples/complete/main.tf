@@ -42,9 +42,11 @@ module "tgw" {
       transit_gateway_default_route_table_association = false
       transit_gateway_default_route_table_propagation = false
 
+      tgw_route_table = "vpc1-route-table"
       tgw_routes = [
         {
-          destination_cidr_block = "30.0.0.0/16"
+          destination_cidr_block     = "10.20.0.0/16"
+          transit_gateway_attachment = "vpc2"
         },
         {
           blackhole              = true
@@ -56,6 +58,7 @@ module "tgw" {
       vpc_id     = module.vpc2.vpc_id
       subnet_ids = module.vpc2.private_subnets
 
+      tgw_route_table = "vpc2-route-table"
       tgw_routes = [
         {
           destination_cidr_block = "50.0.0.0/16"
